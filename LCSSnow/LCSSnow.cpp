@@ -24,54 +24,99 @@ bool attachedToWeather = false;
 int snowFlakes = 400;
 int bindedWeather = -1;
 bool randomlySwitchRainWithSnow = false;
+bool toggleableFromSCM = false;
 int modeKey = VK_F8;
 
 // Global variables of original snow fall code.
 snowFlake* snowArray;
+bool snowArrayInitialized = false;
 float Snow; // CWeather::Snow
 // float Stored_Snow; // CWeather::Stored_Snow
 
+// I wanted these to be static member of AddSnow, but XP has problems with static var. allocation >:(
+RwIm3DVertex snowVertexBuffer[] =
+{
+	{CVector(0.1, 0.0, 0.1), CVector(), 0xFFFFFFFF, 1.0f, 1.0f},
+	{CVector(-0.1, 0.0, 0.1), CVector(), 0xFFFFFFFF, 0.0f, 1.0f},
+	{CVector(-0.1, 0.0, -0.1), CVector(), 0xFFFFFFFF, 0.0f, 0.0f},
+	{CVector(0.1, 0.0, 0.1), CVector(), 0xFFFFFFFF, 1.0f, 1.0f},
+	{CVector(0.1, 0.0, -0.1), CVector(), 0xFFFFFFFF, 1.0f, 0.0f},
+	{CVector(-0.1, 0.0, -0.1), CVector(), 0xFFFFFFFF, 0.0f, 0.0f},
+};
+
+RwImVertexIndex snowRenderOrder[] =
+{
+	0, 1, 2, 3, 4, 5
+};
+
+CBox snowBox;
+CMatrix mat;
+
+// my additions
+void *snowRaster = nil;
+
+float turnOffTime;
+wchar unicodeMsg[32];
+char asciiMsg[32];
+char gxtCharMsg[32];
+
+bool toggleKeyPressed = false;
+
 // CWeather
-float& InterpolationValue = *AddressByVersion<float*>(0x8F2520, 0, 0, 0x9787D8, 0, 0);
-// float& Rain = *AddressByVersion<float*>(0x8E2BFC, 0, 0, 0x975340, 0, 0);
-uint16& NewWeatherType = *AddressByVersion<uint16*>(0x95CC70, 0, 0, 0xA10A2E, 0, 0);
-// uint16& OldWeatherType = *AddressByVersion<uint16*>(0x95CCEC, 0, 0, 0xA10AAA, 0, 0);
+float& InterpolationValue = *AddressByVersion<float*>(0x8F2520, 0, 0, 0x9787D8, 0, 0, 0xC8130C); 
+float& Rain = *AddressByVersion<float*>(0x8E2BFC, 0, 0, 0x975340, 0, 0, 0xC81324);
+uint16& NewWeatherType = *AddressByVersion<uint16*>(0x95CC70, 0, 0, 0xA10A2E, 0, 0, 0xC8131C); 
+//uint16& OldWeatherType = *AddressByVersion<uint16*>(0x95CCEC, 0, 0, 0xA10AAA, 0, 0, 0xC81320);
+float& Foggyness = *(float*)0xC81300; // only for SA atm (is it even on other games?)
 
-void** smokeII_3RasterPtr = AddressByVersion<void**>(0x648F20, 0, 0, 0x77E6F8, 0, 0); // gpSmoke2Raster is 0x648F18 in III, but we need gpSmoke2Raster[2]
-
-addr rwim3dtraddr = AddressByVersion<addr>(0x5B6720, 0, 0, 0x65AE90, 0, 0);
-addr rwim3dendaddr = AddressByVersion<addr>(0x5B67F0, 0, 0, 0x65AF60, 0, 0);
-addr rwim3dripaddr = AddressByVersion<addr>(0x5B6820, 0, 0, 0x65AF90, 0, 0);
+addr rwim3dtraddr = AddressByVersion<addr>(0x5B6720, 0, 0, 0x65AE90, 0, 0, 0x7EF450); 
+addr rwim3dendaddr = AddressByVersion<addr>(0x5B67F0, 0, 0, 0x65AF60, 0, 0, 0x7EF520);
+addr rwim3dripaddr = AddressByVersion<addr>(0x5B6820, 0, 0, 0x65AF90, 0, 0, 0x7EF550);
 WRAPPER void* RwIm3DTransform(RwIm3DVertex* pVerts, uint32 numVerts, RwMatrix* ltm, uint32 flags) { EAXJMP(rwim3dtraddr); }
 WRAPPER bool RwIm3DEnd() { EAXJMP(rwim3dendaddr); }
 WRAPPER bool RwIm3DRenderIndexedPrimitive(uint32 primType, RwImVertexIndex* indices, int32 numIndices) { EAXJMP(rwim3dripaddr); }
 
+// Set in doDelayedThings for SA
 addr rrssAddress = AddressByVersion<addr>(0x5A43C0, 0, 0, 0x649BA0, 0, 0);
 WRAPPER bool RwRenderStateSet(RwRenderState state, void* thing) { EAXJMP(rrssAddress); }
 
-WRAPPER void HelpMessageIII(uint16*, bool) { EAXJMP(0x5051E0); }
-WRAPPER void HelpMessageVC(uint16*, bool, bool) { EAXJMP(0x55BFC0); }
+WRAPPER void HelpMessageIII(wchar*, bool) { EAXJMP(0x5051E0); }
+WRAPPER void HelpMessageVC(wchar*, bool, bool) { EAXJMP(0x55BFC0); }
+WRAPPER void HelpMessageSA(char*, bool, bool, bool) { EAXJMP(0x588BE0); } 
+#define SetHelpMessage(a) if (isSA()) { AsciiToGxtChar(a, gxtCharMsg); HelpMessageSA(gxtCharMsg, 1, 0, 0); } \
+							else if (isVC()) { AsciiToUnicode(a, unicodeMsg); HelpMessageVC(unicodeMsg, 1, 0); } \
+							else if (isIII()) { AsciiToUnicode(a, unicodeMsg); HelpMessageIII(unicodeMsg, 1); }
 
 // CCullZones
-addr cnrAddr = AddressByVersion<addr>(0x525CE0, 0, 0, 0x57E0E0, 0, 0);
-addr pnrAddr = AddressByVersion<addr>(0x525D00, 0, 0, 0x57E0C0, 0, 0);
+addr cnrAddr = AddressByVersion<addr>(0x525CE0, 0, 0, 0x57E0E0, 0, 0, 0x72DDB0);
+addr pnrAddr = AddressByVersion<addr>(0x525D00, 0, 0, 0x57E0C0, 0, 0, 0x72DDC0);
 WRAPPER bool CamNoRain() { EAXJMP(cnrAddr); }
 WRAPPER bool PlayerNoRain() { EAXJMP(pnrAddr); }
 
 CCameraIII* TheCameraIII = (CCameraIII*)0x6FACF8;
 CCameraVC* TheCameraVC = (CCameraVC*)0x7E4688;
+CCameraSA* TheCameraSA = (CCameraSA*)0xB6F028; 
 
-addr attachAddress = AddressByVersion<addr>(0x4B8DD0, 0, 0, 0x4DFA40, 0, 0);
-addr updateRwAddress = AddressByVersion<addr>(0x4B8EC0, 0, 0, 0x4DF8F0, 0, 0);
+addr attachAddress = AddressByVersion<addr>(0x4B8DD0, 0, 0, 0x4DFA40, 0, 0, 0x59BD10);
+addr updateRwAddress = AddressByVersion<addr>(0x4B8EC0, 0, 0, 0x4DF8F0, 0, 0, 0x59BBB0);
 WRAPPER void CMatrix::Attach(RwMatrix* matrix, bool owner) { EAXJMP(attachAddress); }
 WRAPPER void CMatrix::UpdateRW(void) { EAXJMP(updateRwAddress); }
 
-addr wiCallAddress = AddressByVersion<addr>(0x48BFCE, 0, 0, 0x4A4C25, 0, 0);
+addr wiCallAddress = AddressByVersion<addr>(0x48BFCE, 0, 0, 0x4A4C25, 0, 0, 0x5BF90F); 
 void (*WeatherInit)();
 
-uint32 &m_snTimeInMilliseconds = *AddressByVersion<uint32*>(0x885B48, 0, 0, 0x974B2C, 0, 0);
-float &ms_fTimeStep = *AddressByVersion<float*>(0x8E2CB4, 0, 0, 0x975424, 0, 0);
+uint32 &m_snTimeInMilliseconds = *AddressByVersion<uint32*>(0x885B48, 0, 0, 0x974B2C, 0, 0, 0xB7CB84);
+float &ms_fTimeStep = *AddressByVersion<float*>(0x8E2CB4, 0, 0, 0x975424, 0, 0, 0xB7CB5C);
 
+// SA TxdSlot funcs
+WRAPPER void SA_PopCurrentTxd(void) { EAXJMP(0x7316B0); }
+WRAPPER void SA_PushCurrentTxd(void) { EAXJMP(0x7316A0); }
+WRAPPER void SA_SetCurrentTxd(int) { EAXJMP(0x7319C0); }
+WRAPPER int SA_FindTxdSlot(char const*) { EAXJMP(0x731850); }
+WRAPPER void* SA_RwTextureRead(char const*, char const*) { EAXJMP(0x7F3AC0); }
+
+#define isUnderwater (isSA() ? *(float*)0xC8132C > 0.0f : false)
+#define rainyWeather (isSA() ? 8 : 2)
 /*
 #define RwFrameGetMatrix(frame) (RwMatrix*)((addr)frame + 0x10)
 
@@ -118,9 +163,15 @@ void doDelayedThings() {
 		snowFlakes = ini.GetInteger("LCSSnow", "MaxSnowFlakes", snowFlakes);
 		bindedWeather = ini.GetInteger("LCSSnow", "BindToWeather", bindedWeather);
 		randomlySwitchRainWithSnow = ini.GetBoolean("LCSSnow", "RandomlySwitchRainWithSnow", randomlySwitchRainWithSnow);
+		toggleableFromSCM = ini.GetBoolean("LCSSnow", "ToggleableFromSCM", toggleableFromSCM);
 		key = ini.Get("LCSSnow", "ModeSelectKey", std::to_string(modeKey));
 		modeKey = std::stoul(key, nullptr, 16);
 	}
+
+	// RwEngineInstance->dOpenDevice.fpRenderStateSet
+	if(isSA())
+		rrssAddress = *(addr*)((*(addr*)0xC97B24) + 32);
+
 	snowArray = new snowFlake[snowFlakes];
 	WeatherInit();
 }
@@ -131,42 +182,34 @@ AsciiToUnicode(const char* src, wchar* dst)
 	while ((*dst++ = *src++) != '\0');
 }
 
+void
+AsciiToGxtChar(const char* src, char* dst)
+{
+	while ((*dst++ = *src++) != '\0');
+}
+
 // CWeather::AddSnow
 template<class CameraClass>
 void AddSnow(CameraClass* TheCamera)
 {
-	static bool snowArrayInitialized = false;
-	static void* snowRaster = nil;
-
-	// my additions
-	static float cutTime;
-	static wchar unicodeMsg[32];
-	static char asciiMsg[32];
-
-	static bool keystate = false;
-
 	// InterpolationValue is a value between 0 and 1 corresponds to current minute 0-60
 
 	// cycle through snow modes
 	if (GetAsyncKeyState(modeKey) & (1 << 15)) {
-		if (!keystate) {
-			keystate = true;
+		if (!toggleKeyPressed) {
+			toggleKeyPressed = true;
 			targetSnow += 1.0f / 3;
 
 			if (targetSnow > 1.0f) {
-				cutTime = InterpolationValue * 4.0f;
+				turnOffTime = InterpolationValue * 4.0f;
 				targetSnow = 0.0f;
 			}
 			
 			sprintf(asciiMsg, "Snow speed: %.1f", targetSnow);
-			AsciiToUnicode(asciiMsg, unicodeMsg);
-			if (isIII())
-				HelpMessageIII(unicodeMsg, 1);
-			else
-				HelpMessageVC(unicodeMsg, 1, 0);
+			SetHelpMessage(asciiMsg);
 		}
 	} else
-			keystate = false;
+			toggleKeyPressed = false;
 /*
 	static bool keystate2 = false;
 
@@ -175,13 +218,13 @@ void AddSnow(CameraClass* TheCamera)
 		if (!keystate2) {
 			keystate2 = true;
 			OldWeatherType = NewWeatherType;
-			NewWeatherType = 2;
+			NewWeatherType = rainyWeather;
 		}
 	} else
 		keystate2 = false;
 */
 	if (randomlySwitchRainWithSnow) {
-		if (NewWeatherType == 2) {
+		if (NewWeatherType == rainyWeather) {
 			if (switchedRainWithSnow == 0) {
 				if (rand() & 1) {
 					targetSnow = 1.0f;
@@ -207,12 +250,24 @@ void AddSnow(CameraClass* TheCamera)
 		}
 	}
 
+	if (toggleableFromSCM) {
+		// only for SA atm.
+		if (isSA()) {
+			if (*(int*)0xC812D4 == 1) {
+				targetSnow = 1.0f;
+			} else if(*(int*)0xC812D4 == 2) {
+				targetSnow = 0.0f;
+				*(int*)0xC812D4 = 0;
+			}
+		}
+	}
+
 	// CWeather::Update - Modified it a bit to add cutting snow slowly and targetSnow
 	if (targetSnow != 0.0f || Snow != 0.0f) { // Weather == SNOW
 
 		if (targetSnow == 0.0f) {
 			// my addition: cut snow slowly
-			Snow -= 0.25f * (InterpolationValue * 4.0f - cutTime);
+			Snow -= 0.25f * (InterpolationValue * 4.0f - turnOffTime);
 
 			Snow = clamp(Snow, 0.0f, 1.0f);
 		} else {
@@ -235,13 +290,12 @@ void AddSnow(CameraClass* TheCamera)
 
 	// CWeather::AddSnow
 
-	if (!CamNoRain() && !PlayerNoRain()
+	if (!CamNoRain() && !PlayerNoRain() && !isUnderwater
 		/*((float *)pTimeCycle + 2810) <= 0.0 &&*/ // new and unknown timecyc property that exists on many things on LCS
 		/* Snow > 0.0f */) {
 
 		int snowAmount = min(snowFlakes, Snow * snowFlakes); // s0
 
-		static CBox snowBox;
 		//	snowBox.min = {0.0f, 0.0f, 0.0f};
 		//	snowBox.max = {0.0f, 0.0f, 0.0f};
 		snowBox.Set(TheCamera->GetPosition(), TheCamera->GetPosition());
@@ -252,11 +306,14 @@ void AddSnow(CameraClass* TheCamera)
 		snowBox.max.z += 15.0f; // += 10.0f; in PSP
 		snowBox.max.y += 40.0f;
 		if (!snowRaster) {
-			/*			CTxdStore::PushCurrentTxd();
-						CTxdStore::SetCurrentTxd(CTxdStore::FindTxdSlot("particle"));
-						snowRaster = RwTextureGetRaster(RwTextureRead("smokeII_3", nil));
-						CTxdStore::PopCurrentTxd(); */
-			snowRaster = *smokeII_3RasterPtr;
+			if (isSA()) {
+				SA_PushCurrentTxd();
+				SA_SetCurrentTxd(SA_FindTxdSlot("particle"));
+				snowRaster = *((void**)SA_RwTextureRead("shad_exp", 0));
+				SA_PopCurrentTxd();
+			} else {
+				snowRaster = *AddressByVersion<void**>(0x648F20, 0, 0, 0x77E6F8, 0, 0);
+			}
 		}
 
 		if (!snowArrayInitialized)
@@ -284,26 +341,11 @@ void AddSnow(CameraClass* TheCamera)
 
 		// RwError things
 
-		CMatrix mat(TheCamera->GetMatrix());
+		mat = TheCamera->GetMatrix();
 
 		// there was a condition here which is never meant to be met imo
 
 		int i = 0; // s2
-
-		static RwIm3DVertex snowVertexBuffer[] =
-		{
-			{CVector(0.1, 0.0, 0.1), CVector(), 0xFFFFFFFF, 1.0f, 1.0f},
-			{CVector(-0.1, 0.0, 0.1), CVector(), 0xFFFFFFFF, 0.0f, 1.0f},
-			{CVector(-0.1, 0.0, -0.1), CVector(), 0xFFFFFFFF, 0.0f, 0.0f},
-			{CVector(0.1, 0.0, 0.1), CVector(), 0xFFFFFFFF, 1.0f, 1.0f},
-			{CVector(0.1, 0.0, -0.1), CVector(), 0xFFFFFFFF, 1.0f, 0.0f},
-			{CVector(-0.1, 0.0, -0.1), CVector(), 0xFFFFFFFF, 0.0f, 0.0f},
-		};
-
-		static RwImVertexIndex snowRenderOrder[] =
-		{
-			0, 1, 2, 3, 4, 5
-		};
 
 		for (; i < snowAmount; i++)
 		{
@@ -588,7 +630,8 @@ WeatherUpdate_hookVC(void)
 	__asm {
 		cmp		switchedRainWithSnow, 1
 		jz		stopRain
-		cmp     NewWeatherType, 2
+		mov		edi, NewWeatherType
+		cmp     [edi], 2
 		jz		rain
 
 		// look for hurricane
@@ -610,7 +653,8 @@ void __declspec(naked)
 WeatherUpdate_hookIII(void)
 {
 	__asm {
-		cmp     NewWeatherType, 2
+		mov		eax, NewWeatherType
+		cmp     [eax], 2
 		jnz     stopRain
 		cmp		switchedRainWithSnow, 1
 		jz		stopRain
@@ -622,6 +666,126 @@ stopRain:
 		retn
 	}
 }
+
+// --- SA specific hooks start
+
+float fOne = 1.0f;
+float fZero = 0.0f;
+
+// 72BBE1
+void __declspec(naked)
+WeatherUpdate_hookSA(void)
+{
+	__asm {
+		cmp     cx, 10h
+		fld     fZero
+		jz      short itsRainyWeather
+		cmp     cx, 8
+		jnz     short isOldWeatherRainy
+itsRainyWeather:
+		cmp		switchedRainWithSnow, 1
+		jz		short isOldWeatherRainy
+		fstp    st
+		mov		eax, InterpolationValue
+		fld     [eax]
+isOldWeatherRainy:
+		cmp     dx, 10h
+		jz      short oldWeatherWasRainy
+		cmp     dx, 8
+		jnz     short continueCode
+oldWeatherWasRainy:
+		cmp		switchedRainWithSnow, 1
+		jz      short continueCode
+		fld     fOne
+		mov		eax, InterpolationValue
+		fsub	[eax]
+		faddp   st(1), st
+continueCode:
+		push	0x72BC15
+		retn
+	}
+}
+
+// something with coronas
+float *flt_C812D0 = (float*)0xC812D0;
+
+// 72C6FA
+void __declspec(naked)
+WeatherUpdate2_hookSA(void)
+{
+	__asm {
+		mov		ecx, Foggyness
+		fld     [ecx]
+		mov		edx, Rain
+		fcomp   [edx]
+		fnstsw  ax
+		test    ah, 41h
+		jnz     short cmpRainWithSnow
+		fld     [ecx]
+		mov		edx, ecx // eds will be biggest value ptr now on
+		jmp     short cmpFoggynessWithSnow
+cmpRainWithSnow:
+		fld     [edx]
+		// mov		edx, edx // eds will be biggest value ptr now on
+cmpFoggynessWithSnow:
+		fcomp   Snow
+		fnstsw  ax
+		test    ah, 41h
+		jnz     short biggestIsSnow
+		jmp     short contWithPreviousBiggest
+biggestIsSnow:
+		mov		edx, offset Snow
+contWithPreviousBiggest:
+		fld		[edx]
+		fld     fOne
+		fcomp   st(1)
+		fnstsw  ax
+		fstp    st
+		test    ah, 5
+		jp      short storeBiggestValToCoronaThing
+		mov		ecx, flt_C812D0
+		mov     [ecx], 3F800000h
+		jmp		continueCode
+
+storeBiggestValToCoronaThing:
+		mov		ecx, flt_C812D0
+		mov		edx, [edx]
+		mov     [ecx], edx
+
+continueCode:
+		push	 0x72C765
+		retn
+	}
+}
+
+// 6D2C0F
+void __declspec(naked)
+VehicleMakeDirty_hookSA(void)
+{
+	__asm {
+		mov		eax, Rain
+		fld     [eax]
+		fcomp   snowThresholdShelter
+		fnstsw  ax
+		test    ah, 1
+		jz      cleanCar
+
+		fld     Snow
+		fcomp   snowThresholdShelter
+		fnstsw  ax
+		test    ah, 1
+		jz      cleanCar
+
+		push	0x6D2C26
+		retn
+
+cleanCar:
+		push	0x6D2D19
+		retn
+	}
+}
+
+// --- SA specific hooks end
 
 void (*RenderRainStreaks)(void);
 void
@@ -638,6 +802,13 @@ AddSnow_hookVC()
 	RenderRainStreaks();
 }
 
+void
+AddSnow_hookSA()
+{
+	AddSnow<CCameraSA>(TheCameraSA);
+	RenderRainStreaks();
+}
+
 BOOL WINAPI
 DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
 {
@@ -651,22 +822,23 @@ DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
 			freopen("CONOUT$", "w", stdout);
 			freopen("CONOUT$", "w", stderr);
 		}
-*/		
+*/
 		GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCSTR)& DllMain, &hDummyHandle);
 
 		srand((uint32)time(0));
 
-		// III
-		if (*(DWORD*)0x5C1E70 == 0x53E58955) {
+		doVersionCheck();
+
+		if (isIII()) {
 			InterceptCall(&RenderRainStreaks, AddSnow_hookIII, 0x48E06D);
 
 			// don't enable the rain when we switched it with snow
 			InjectHook(0x522F0A, WeatherUpdate_hookIII, PATCH_JUMP);
-		// VC
-		} else if (*(DWORD*)0x667BF5 == 0xB85548EC) {
+
+		} else if (isVC()) {
 			InterceptCall(&RenderRainStreaks, AddSnow_hookVC, 0x4A65C3);
 
-			// shelter and population things
+			// VC / ReLCS extra: shelter and population things
 			InjectHook(0x4E9EB5, UseNearbyAttractors1_hook, PATCH_JUMP);
 			InjectHook(0x4EA21A, UseNearbyAttractors2_hook, PATCH_JUMP);
 			InjectHook(0x4EA3AF, UseNearbyAttractors3_hook, PATCH_JUMP);
@@ -679,8 +851,19 @@ DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
 
 			// don't enable the rain when we switched it with snow
 			InjectHook(0x57D860, WeatherUpdate_hookVC, PATCH_JUMP);
-		}
-		else return FALSE;
+
+		} else if (isSA()) {
+			InterceptCall(&RenderRainStreaks, AddSnow_hookSA, 0x53E126); 
+
+			// SA extra: clean cars while it's snowing
+			InjectHook(0x6D2C0F, VehicleMakeDirty_hookSA, PATCH_JUMP);
+
+			// don't enable the rain when we switched it with snow
+			InjectHook(0x72BBE1, WeatherUpdate_hookSA, PATCH_JUMP);
+			// some corona thing
+			InjectHook(0x72C6FA, WeatherUpdate2_hookSA, PATCH_JUMP);
+		} else
+			return FALSE;
 
 		InterceptCall(&WeatherInit, doDelayedThings, wiCallAddress);
 	}

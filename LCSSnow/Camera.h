@@ -516,6 +516,12 @@ struct CCameraVC : public CPlaceableVC
 };
 extern CCameraVC *TheCameraVC;
 
+// We only need that in here
+struct CCameraSA : public CPlaceableSA
+{
+};
+extern CCameraSA *TheCameraSA;
+
 struct CCameraIII : public CPlaceable
 {
 	bool m_bAboveGroundTrainNodesLoaded;

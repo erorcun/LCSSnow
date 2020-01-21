@@ -392,6 +392,21 @@ public:
 	CVector& GetUp(void) { return *(CVector*)& m_matrix.at; }
 };
 
+class CPlaceableSA
+{
+public:
+	CVector simplePos;
+	float angle;
+	CMatrix *m_matrix;
+
+	virtual ~CPlaceableSA(void) { };
+	CVector& GetPosition(void) { return m_matrix->GetPosition(); }
+	CVector& GetRight(void) { return m_matrix->GetRight(); }
+	CVector& GetForward(void) { return m_matrix->GetForward(); }
+	CVector& GetUp(void) { return m_matrix->GetUp(); }
+	CMatrix& GetMatrix(void) { return *m_matrix; }
+};
+
 // Without vtbl. Used for CCameraVC
 class CPlaceableVC
 {

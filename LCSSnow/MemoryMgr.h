@@ -24,22 +24,32 @@ enum
 	III_STEAM,
 	VC_10,
 	VC_11,
-	VC_STEAM
+	VC_STEAM,
+	SA_10_US,
+	SA_RGL
 };
 
 extern int gtaversion;
 
+inline void
+doVersionCheck()
+{
+	if (*(addr*)0x5C1E75 == 0xB85548EC) gtaversion = III_10;
+	else if (*(addr*)0x5C2135 == 0xB85548EC) gtaversion = III_11;
+	else if (*(addr*)0x5C6FD5 == 0xB85548EC) gtaversion = III_STEAM;
+	else if (*(addr*)0x667BF5 == 0xB85548EC) gtaversion = VC_10;
+	else if (*(addr*)0x667C45 == 0xB85548EC) gtaversion = VC_11;
+	else if (*(addr*)0x666BA5 == 0xB85548EC) gtaversion = VC_STEAM;
+	else if (*(addr*)0x82457C == 0x94BF) gtaversion = SA_10_US;
+	else if (*(addr*)0x858501 == 0x3539F633) gtaversion = SA_RGL;
+	else gtaversion = 0;
+}
+
 template<typename T>
-inline T AddressByVersion(addr addressIII10, addr addressIII11, addr addressIIISteam, addr addressvc10, addr addressvc11, addr addressvcSteam)
+inline T AddressByVersion(addr addressIII10, addr addressIII11, addr addressIIISteam, addr addressvc10, addr addressvc11 = 0, addr addressvcSteam = 0, addr addressSA10 = 0, addr addressSARGL = 0)
 {
 	if (gtaversion == -1) {
-		if (*(addr*)0x5C1E75 == 0xB85548EC) gtaversion = III_10;
-		else if (*(addr*)0x5C2135 == 0xB85548EC) gtaversion = III_11;
-		else if (*(addr*)0x5C6FD5 == 0xB85548EC) gtaversion = III_STEAM;
-		else if (*(addr*)0x667BF5 == 0xB85548EC) gtaversion = VC_10;
-		else if (*(addr*)0x667C45 == 0xB85548EC) gtaversion = VC_11;
-		else if (*(addr*)0x666BA5 == 0xB85548EC) gtaversion = VC_STEAM;
-		else gtaversion = 0;
+		doVersionCheck();
 	}
 	switch (gtaversion) {
 	case III_10:
@@ -54,6 +64,10 @@ inline T AddressByVersion(addr addressIII10, addr addressIII11, addr addressIIIS
 		return (T)addressvc11;
 	case VC_STEAM:
 		return (T)addressvcSteam;
+	case SA_10_US:
+		return (T)addressSA10;
+	case SA_RGL:
+		return (T)addressSARGL;
 	default:
 		return (T)0;
 	}
@@ -75,6 +89,12 @@ inline bool
 isVC(void)
 {
 	return gtaversion >= VC_10 && gtaversion <= VC_STEAM;
+}
+
+inline bool
+isSA(void)
+{
+	return gtaversion >= SA_10_US;
 }
 
 #define PTRFROMCALL(addr) (uint32_t)(*(uint32_t*)((uint32_t)addr+1) + (uint32_t)addr + 5)
